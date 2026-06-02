@@ -3,6 +3,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from transbook.ocr.bbox import clamp_bbox_to_image
 from transbook.ocr.mock_ocr import run_mock_ocr
 from transbook.render.pillow_overlay import render_translated_block
 from transbook.translation.mock_translator import translate_text
@@ -32,14 +33,25 @@ def process_image(image_path: Path, target_lang: str, out_dir: Path) -> None:
     rendered = image.copy()
 
     for block in ocr_result.blocks:
-        visual = analyze_block_background(image, block)
-        translated_text = translate_text(block.text, target_lang)
+        safe_block = clamp_bbox_to_image(
+            block=block,
+            image_width=image.width,
+            image_height=image.height,
+        )
+
+        if safe_block is None:
+            visual = analyze_block_background(image, block)
+            visual_metadata.append(visual.model_dump())
+            continue
+
+        visual = analyze_block_background(image, safe_block)
+        translated_text = translate_text(safe_block.text, target_lang)
 
         visual_metadata.append(visual.model_dump())
         translation_blocks.append(
             {
-                "block_id": block.id,
-                "source_text": block.text,
+                "block_id": safe_block.id,
+                "source_text": safe_block.text,
                 "translated_text": translated_text,
                 "target_lang": target_lang,
             }
@@ -48,7 +60,7 @@ def process_image(image_path: Path, target_lang: str, out_dir: Path) -> None:
         if visual.recommended_render_mode == "replace":
             rendered = render_translated_block(
                 image=rendered,
-                block=block,
+                block=safe_block,
                 visual=visual,
                 translated_text=translated_text,
             )
